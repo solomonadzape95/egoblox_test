@@ -338,17 +338,21 @@ bot.catch((err) => {
 // Add near the top with other imports
 declare global {
   var botStartTime: string;
+  var botPollingInfo: {
+    lastPollTime: string;
+    totalPolls: number;
+    lastUpdate?: any;
+  };
 }
-//delete webhooks
-async function deleteWebhook() {
-  try {
-    await bot.api.deleteWebhook();
-    console.log("Webhook deleted successfully");
-  } catch (error) {
-    console.error("Error deleting webhook:", error);
-  }
-}
-// Modify startBot function
+
+// Initialize globals
+global.botStartTime = new Date().toISOString();
+global.botPollingInfo = {
+  lastPollTime: new Date().toISOString(),
+  totalPolls: 0
+};
+
+// Modify startBot function to include polling logs
 export async function startBot() {
   try {
     console.log('Starting bot...');
@@ -367,6 +371,12 @@ export async function startBot() {
     await initializeDB();
     global.botStartTime = new Date().toISOString();
 
+    // Add update listener to log updates
+    bot.on('message:text', (ctx) => {
+      global.botPollingInfo.lastUpdate = ctx.update;
+      console.log('Received update:', JSON.stringify(ctx.update, null, 2));
+    });
+
     // Start long polling with more detailed logging
     console.log('Starting long polling...');
     await bot.start({
@@ -374,13 +384,14 @@ export async function startBot() {
       onStart: () => {
         console.log("Bot started successfully with long polling!");
       },
-      drop_pending_updates: true
+      drop_pending_updates: true,
+      timeout: 30
     });
     
     console.log('Bot start completed');
   } catch (error) {
     console.error('Failed to start bot:', error);
-    throw error; // Propagate error for better debugging
+    throw error;
   }
 }
 

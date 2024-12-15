@@ -10,13 +10,24 @@ export default async function handler(req: any, res: any) {
         username: botInfo.username,
         isActive: true
       },
+      polling: {
+        startTime: global.botStartTime,
+        lastPollTime: global.botPollingInfo?.lastPollTime,
+        totalPolls: global.botPollingInfo?.totalPolls,
+        lastUpdate: global.botPollingInfo?.lastUpdate
+      },
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     res.status(503).json({
       status: 'error',
       message: 'Bot is not responding',
-      error: error.message
+      error: error.message,
+      polling: {
+        startTime: global.botStartTime,
+        lastPollTime: global.botPollingInfo?.lastPollTime,
+        totalPolls: global.botPollingInfo?.totalPolls
+      }
     });
   }
 } 
