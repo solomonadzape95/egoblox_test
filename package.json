@@ -1,32 +1,25 @@
 {
-  "name": "egoblox_test",
+  "name": "group-wallet-bot",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Telegram bot for managing group wallets on Ethereum",
+  "type": "module",
+  "main": "api/bot.js",
   "scripts": {
-    "dev": "nodemon --exec ts-node src/bot.ts",
-    "start": "node dist/bot.js",
-    "build": "tsc"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "devDependencies": {
-    "@types/express": "^5.0.0",
-    "@types/node": "^22.10.2",
-    "nodemon": "^3.1.9",
-    "prisma": "^6.0.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.7.2"
+    "start": "node api/bot.js",
+    "dev": "nodemon api/bot.js"
   },
   "dependencies": {
+    "@vercel/postgres": "^0.7.2",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.11.1",
+    "grammy": "^1.21.1",
     "@grammyjs/conversations": "^1.2.0",
-    "@prisma/client": "^6.0.1",
-    "@vercel/postgres": "^0.10.0",
-    "dotenv": "^16.4.7",
-    "ethers": "^6.13.4",
-    "express": "^4.21.2",
-    "grammy": "^1.33.0",
-    "uuid": "^11.0.3"
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
