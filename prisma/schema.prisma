@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Wallet {
+  id            String   @id @default(uuid())
+  address       String   @unique
+  chatId        BigInt
+  createdAt     DateTime @default(now())
+  createdById   BigInt
+  createdByName String
+  mnemonic      String
+  admins        Admin[]
+  transactions  Transaction[]
+}
+
+model Admin {
+  id        BigInt
+  name      String
+  walletId  String
+  wallet    Wallet    @relation(fields: [walletId], references: [id])
+  addedAt   DateTime  @default(now())
+
+  @@id([id, walletId])
+}
+
+model Transaction {
+  id          String   @id @default(uuid())
+  amount      Float
+  recipient   String
+  description String
+  timestamp   DateTime @default(now())
+  txHash      String?
+  approved    Boolean  @default(false)
+  walletId    String
+  wallet      Wallet   @relation(fields: [walletId], references: [id])
+  signatories BigInt[]
+} 
