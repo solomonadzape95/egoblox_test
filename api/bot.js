@@ -1,64 +1,28 @@
 import { webhookCallback } from "grammy";
-import { Bot, Context, session, SessionFlavor } from "grammy";
-import {
-  conversations,
-  createConversation,
-  ConversationFlavor,
-} from "@grammyjs/conversations";
+import { Bot, session } from "grammy";
+import { conversations, createConversation } from "@grammyjs/conversations";
 import { ethers } from "ethers";
 import { v4 as uuidv4 } from "uuid";
-import * as dotenv from "dotenv";
+import dotenv from "dotenv";
 import {
   initializeDB,
   createWallet as dbCreateWallet,
   getWallet,
   createTransaction as dbCreateTransaction,
-} from "./db";
-import { VercelRequest, VercelResponse } from "@vercel/node";
-import express from "express";
-
+} from "./db.js";
 // Load environment variables
 dotenv.config();
 
-// Wallet interface
-interface GroupWallet {
-  id: string;
-  chatId: number;
-  wallet: ethers.HDNodeWallet;
-  admins: number[];
-  transactions: Transaction[];
-}
-
-// Transaction interface
-interface Transaction {
-  id: string;
-  amount: number;
-  recipient: string;
-  description: string;
-  timestamp: number;
-  signatories: number[];
-  txHash?: string;
-  approved: boolean;
-}
-
-// Extended context with session and conversation support
-type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
-
-// Session data structure
-interface SessionData {
-  groupWallets: { [chatId: number]: GroupWallet };
-}
+// Global wallets storage
+const groupWallets = {};
 
 // Initialize Ethereum provider
 const provider = new ethers.JsonRpcProvider(
   process.env.ETHEREUM_RPC_URL || "https://sepolia.infura.io/v3/YOUR-PROJECT-ID"
 );
 
-// Global wallets storage
-const groupWallets: { [chatId: number]: GroupWallet } = {};
-
 // Initialize bot
-const bot = new Bot<MyContext>(process.env.BOT_TOKEN || "");
+const bot = new Bot(process.env.BOT_TOKEN || "");
 
 // Configure session middleware
 bot.use(
@@ -75,7 +39,7 @@ bot.use(conversations());
 // Reply middleware
 bot.use(async (ctx, next) => {
   const originalReply = ctx.reply.bind(ctx);
-  ctx.reply = async (text: string, other: any = {}) => {
+  ctx.reply = async (text, other = {}) => {
     return await originalReply(text, {
       ...other,
       reply_to_message_id: ctx.message?.message_id,
@@ -86,7 +50,7 @@ bot.use(async (ctx, next) => {
 });
 
 // Helper function to check admin status
-async function isGroupAdmin(ctx: MyContext): Promise<boolean> {
+async function isGroupAdmin(ctx) {
   try {
     if (!ctx.chat?.id || !ctx.from?.id) return false;
     const chatMember = await ctx.api.getChatMember(ctx.chat.id, ctx.from.id);
@@ -101,7 +65,7 @@ async function isGroupAdmin(ctx: MyContext): Promise<boolean> {
 initializeDB().catch(console.error);
 
 // helper function to check for wallet existence
-async function walletExists(chatId: number): Promise<boolean> {
+async function walletExists(chatId) {
   try {
     const dbWallet = await getWallet(chatId);
     return dbWallet !== null;
@@ -112,7 +76,7 @@ async function walletExists(chatId: number): Promise<boolean> {
 }
 
 // Conversations
-const createWalletConversation = createConversation<MyContext>(
+const createWalletConversation = createConversation(
   async (conversation, ctx) => {
     // Check if wallet already exists
     if (await walletExists(ctx.chat?.id || 0)) {
@@ -139,7 +103,7 @@ const createWalletConversation = createConversation<MyContext>(
       );
 
       // Save to memory
-      const newWallet: GroupWallet = {
+      const newWallet = {
         id: walletId,
         chatId: ctx.chat?.id || 0,
         wallet: wallet,
@@ -166,7 +130,7 @@ Admin: @${ctx.from?.username || ctx.from?.first_name || "Unknown"}
   "create-wallet"
 );
 
-const createTransactionConversation = createConversation<MyContext>(
+const createTransactionConversation = createConversation(
   async (conversation, ctx) => {
     // Check if user is admin
     if (!(await isGroupAdmin(ctx))) {
@@ -238,7 +202,7 @@ const createTransactionConversation = createConversation<MyContext>(
       );
 
       // Save to memory
-      const transaction: Transaction = {
+      const transaction = {
         id: transactionId,
         amount,
         recipient,
@@ -338,11 +302,5 @@ bot.catch((err) => {
   console.error("Bot error:", err);
 });
 
-// Vercel-compatible webhook handler
-export default async (req: VercelRequest, res: VercelResponse) => {
-  if (req.method === "POST") {
-    await webhookCallback(bot, "http")(req, res);
-  } else {
-    res.status(405).send("Method Not Allowed");
-  }
-};
+// Export webhook callback for platforms like Vercel
+export default webhookCallback(bot, "http");
