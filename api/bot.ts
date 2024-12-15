@@ -14,6 +14,7 @@ import {
   getWallet,
   createTransaction as dbCreateTransaction,
 } from "./db";
+import { VercelRequest, VercelResponse } from "@vercel/node";
 import express from "express";
 
 // Load environment variables
@@ -337,35 +338,11 @@ bot.catch((err) => {
   console.error("Bot error:", err);
 });
 
-// Webhook path
-const WEBHOOK_PATH = `/telegram/${process.env.BOT_TOKEN}`;
-
-// Vercel serverless function handler
-export default async function handler(req: any, res: any) {
+// Vercel-compatible webhook handler
+export default async (req: VercelRequest, res: VercelResponse) => {
   if (req.method === "POST") {
-    try {
-      await webhookCallback(bot, "express")(req, res);
-    } catch (error) {
-      console.error("Webhook error:", error);
-      res.status(500).json({ error: "Failed to process webhook" });
-    }
+    await webhookCallback(bot, "http")(req, res);
   } else {
-    res.status(200).send("Bot is running");
+    res.status(405).send("Method Not Allowed");
   }
-}
-
-// Webhook setup function
-export async function setupWebhook() {
-  try {
-    await bot.api.deleteWebhook();
-    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}${WEBHOOK_PATH}`;
-    await bot.api.setWebhook(webhookUrl);
-    console.log(`Webhook set to: ${webhookUrl}`);
-  } catch (error) {
-    console.error("Failed to set webhook:", error);
-  }
-}
-
-// Initialize webhook
-// setupWebhook();
-bot.start();
+};
