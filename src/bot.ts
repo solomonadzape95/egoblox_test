@@ -368,22 +368,30 @@ export async function setupWebhook() {
   }
 }
 
-// Start server based on environment
-// if (process.env.NODE_ENV === "production") {
-//   // Vercel serverless function handler
-  export default async function handler(req: any, res: any) {
-    if (req.method === "POST" && req.url === WEBHOOK_PATH) {
-      await webhookCallback(bot, "express")(req, res);
-    } else {
-      res.status(200).send("Bot is running");
-    }
-  }
-  setupWebhook();
-// } else {
-  // Local development server
-//   const PORT = process.env.PORT || 3000;
-//   app.listen(PORT, async () => {
-//     console.log(`Bot is running on port ${PORT}`);
-//     await setupWebhook();
-//   });
+// Remove the if-else block and keep only the handler
+// export default async function handler(req: any, res: any) {
+//   if (process.env.NODE_ENV === 'production') {
+//     if (req.method === "POST" && req.url === WEBHOOK_PATH) {
+//       await webhookCallback(bot, "express")(req, res);
+//     } else {
+//       res.status(200).send("Bot is running");
+//     }
+//   } else {
+//     // Local development server
+//     const PORT = process.env.PORT || 3000;
+//     app.listen(PORT, async () => {
+//       console.log(`Bot is running on port ${PORT}`);
+//       await setupWebhook();
+//     });
+//   }
 // }
+
+setupWebhook();
+// Vercel serverless function handler
+export default async function handler(req: any, res: any) {
+  if (req.method === "POST" && req.url === WEBHOOK_PATH) {
+    await webhookCallback(bot, "express")(req, res);
+  } else {
+    res.status(200).send("Bot is running");
+  }
+}
