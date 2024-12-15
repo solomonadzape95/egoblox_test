@@ -349,7 +349,13 @@ app.get("/", (req, res) => {
 
 // Webhook handler
 app.post(WEBHOOK_PATH, webhookCallback(bot, "express"));
-
+export default async function handler(req: any, res: any) {
+  if (req.method === "POST" && req.url === WEBHOOK_PATH) {
+    await webhookCallback(bot, "express")(req, res);
+  } else {
+    res.status(200).send("Bot is running");
+  }
+}
 // Webhook setup function
 export async function setupWebhook() {
   try {
@@ -387,11 +393,5 @@ export async function setupWebhook() {
 // }
 
 setupWebhook();
+// bot.start();
 // Vercel serverless function handler
-export default async function handler(req: any, res: any) {
-  if (req.method === "POST" && req.url === WEBHOOK_PATH) {
-    await webhookCallback(bot, "express")(req, res);
-  } else {
-    res.status(200).send("Bot is running");
-  }
-}
