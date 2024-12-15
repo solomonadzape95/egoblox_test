@@ -157,11 +157,15 @@ const createWalletConversation = createConversation<MyContext>(
       await prisma.wallet.create({
         data: {
           id: newWallet.id,
+          address: wallet.address,
           chatId: BigInt(newWallet.chatId),
+          createdById: BigInt(ctx.from?.id || 0),
+          createdByName: ctx.from?.first_name || "Unknown",
           mnemonic: wallet.mnemonic?.phrase || "",
           admins: {
             create: newWallet.admins.map((adminId) => ({
               id: BigInt(adminId),
+              name: ctx.from?.first_name || "Unknown",
             })),
           },
         },
@@ -319,7 +323,8 @@ bot.command("balance", async (ctx) => {
 bot.catch((err) => {
   console.error("Bot error:", err);
 });
-
+// Webhook path
+const WEBHOOK_PATH = `/telegram/${process.env.BOT_TOKEN}`;
 // Vercel serverless function handler
 export default async function handler(req: any, res: any) {
   // Initial wallet load (only on first invocation)
@@ -343,7 +348,7 @@ export default async function handler(req: any, res: any) {
 export async function setupWebhook() {
   try {
     // Use environment variable for webhook URL
-    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}/api/webhook`;
+    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}${WEBHOOK_PATH}`;
 
     await bot.api.setWebhook(webhookUrl, {
       drop_pending_updates: true,
@@ -354,3 +359,5 @@ export async function setupWebhook() {
     console.error("Failed to set webhook:", error);
   }
 }
+setupWebhook();
+bot.start();
