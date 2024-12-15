@@ -1,4 +1,3 @@
-import express from "express";
 import { webhookCallback } from "grammy";
 import { Bot, Context, session, SessionFlavor } from "grammy";
 import {
@@ -8,10 +7,8 @@ import {
 } from "@grammyjs/conversations";
 import { ethers } from "ethers";
 import { v4 as uuidv4 } from "uuid";
-import https from "https";
-import fs from "fs";
 import * as dotenv from "dotenv";
-import { PrismaClient } from '.prisma/client';
+import { PrismaClient } from "@prisma/client";
 
 // Load environment variables
 dotenv.config();
@@ -44,10 +41,17 @@ type MyContext = Context & SessionFlavor<SessionData> & ConversationFlavor;
 interface SessionData {
   groupWallets: { [chatId: number]: GroupWallet };
 }
+
 // Initialize Ethereum provider (use Sepolia testnet as default)
 const provider = new ethers.JsonRpcProvider(
   process.env.ETHEREUM_RPC_URL || "https://sepolia.infura.io/v3/YOUR-PROJECT-ID"
 );
+
+// Initialize Prisma
+const prisma = new PrismaClient();
+
+// Global wallets storage (for serverless environment)
+const groupWallets: { [chatId: number]: GroupWallet } = {};
 
 // Initialize bot
 const bot = new Bot<MyContext>(process.env.BOT_TOKEN || "");
@@ -64,20 +68,72 @@ bot.use(
 // Use conversations plugin
 bot.use(conversations());
 
-// Add the reply middleware here
+// Reply middleware
 bot.use(async (ctx, next) => {
   const originalReply = ctx.reply.bind(ctx);
   ctx.reply = async (text: string, other: any = {}) => {
     return await originalReply(text, {
       ...other,
       reply_to_message_id: ctx.message?.message_id,
-      allow_sending_without_reply: true
+      allow_sending_without_reply: true,
     });
   };
   await next();
 });
 
-// First define conversations
+// Helper function to check admin status
+async function isGroupAdmin(ctx: MyContext): Promise<boolean> {
+  try {
+    if (!ctx.chat?.id || !ctx.from?.id) return false;
+
+    const chatMember = await ctx.api.getChatMember(ctx.chat.id, ctx.from.id);
+
+    return ["creator", "administrator"].includes(chatMember.status);
+  } catch (error) {
+    console.error("Error checking admin status:", error);
+    return false;
+  }
+}
+
+// Load wallets from database
+async function loadWalletsFromDB() {
+  try {
+    const dbWallets = await prisma.wallet.findMany({
+      include: {
+        admins: true,
+        transactions: true,
+      },
+    });
+    for (const dbWallet of dbWallets) {
+      const wallet = ethers.HDNodeWallet.fromPhrase(dbWallet.mnemonic).connect(
+        provider
+      );
+
+      groupWallets[Number(dbWallet.chatId)] = {
+        id: dbWallet.id,
+        chatId: Number(dbWallet.chatId),
+        wallet: wallet,
+        admins: dbWallet.admins.map((admin: { id: BigInt }) =>
+          Number(admin.id)
+        ),
+        transactions: dbWallet.transactions.map((tx: any) => ({
+          id: tx.id,
+          amount: tx.amount,
+          recipient: tx.recipient,
+          description: tx.description,
+          timestamp: tx.timestamp.getTime(),
+          signatories: tx.signatories.map(Number),
+          txHash: tx.txHash || undefined,
+          approved: tx.approved,
+        })),
+      };
+    }
+  } catch (error) {
+    console.error("Error loading wallets from DB:", error);
+  }
+}
+
+// Conversations
 const createWalletConversation = createConversation<MyContext>(
   async (conversation, ctx) => {
     await ctx.reply("Creating a new group wallet...");
@@ -94,8 +150,22 @@ const createWalletConversation = createConversation<MyContext>(
         transactions: [],
       };
 
-      // Save wallet to session
-      ctx.session.groupWallets[newWallet.chatId] = newWallet;
+      // Save wallet to global storage and potentially database
+      groupWallets[newWallet.chatId] = newWallet;
+
+      // Optional: Save to database using Prisma
+      await prisma.wallet.create({
+        data: {
+          id: newWallet.id,
+          chatId: BigInt(newWallet.chatId),
+          mnemonic: wallet.mnemonic?.phrase || "",
+          admins: {
+            create: newWallet.admins.map((adminId) => ({
+              id: BigInt(adminId),
+            })),
+          },
+        },
+      });
 
       await ctx.reply(`Wallet created successfully!
 Address: ${wallet.address}
@@ -115,7 +185,7 @@ Admins: ${newWallet.admins.join(", ")}
 
 const createTransactionConversation = createConversation<MyContext>(
   async (conversation, ctx) => {
-    const wallet = ctx.session.groupWallets[ctx.chat?.id || 0];
+    const wallet = groupWallets[ctx.chat?.id || 0];
 
     if (!wallet) {
       await ctx.reply("No wallet exists for this group.");
@@ -154,6 +224,21 @@ const createTransactionConversation = createConversation<MyContext>(
 
       wallet.transactions.push(transaction);
 
+      // Save transaction to database
+      await prisma.transaction.create({
+        data: {
+          id: transaction.id,
+          walletId: wallet.id,
+          amount: transaction.amount,
+          recipient: transaction.recipient,
+          description: transaction.description,
+          timestamp: new Date(transaction.timestamp),
+          signatories: transaction.signatories.map((id) => BigInt(id)),
+          txHash: transaction.txHash,
+          approved: transaction.approved,
+        },
+      });
+
       await ctx.reply(`Transaction created:
 Recipient: ${recipient}
 Amount: ${amount} ETH
@@ -169,24 +254,21 @@ Description: ${description}`);
   "create-transaction"
 );
 
-// Then register them
+// Register conversations
 bot.use(createWalletConversation);
 bot.use(createTransactionConversation);
 
-// Middleware to only respond to mentions in groups
+// Middleware for group mentions
 bot.use(async (ctx, next) => {
-  // Check if the bot is in a group and not directly mentioned
   if (ctx.chat?.type === "group" || ctx.chat?.type === "supergroup") {
     const message = ctx.message;
     const botUsername = ctx.me.username;
 
-    // Only proceed if the bot is mentioned
     if (!message?.text?.includes(`@${botUsername}`)) {
       return;
     }
   }
 
-  // Handle direct messages
   if (ctx.chat?.type === "private") {
     await ctx.reply(
       "Please add me to a group to use the Group Wallet Bot. I can only manage wallets in group chats."
@@ -207,12 +289,11 @@ bot.command("start", (ctx) => {
 });
 
 bot.command("createwallet", async (ctx) => {
-  // Check if user is admin
-  if (!await isGroupAdmin(ctx)) {
+  if (!(await isGroupAdmin(ctx))) {
     await ctx.reply("Only group administrators can create wallets.");
     return;
   }
-  
+
   await ctx.conversation.enter("create-wallet");
 });
 
@@ -221,7 +302,7 @@ bot.command("createtx", async (ctx) => {
 });
 
 bot.command("balance", async (ctx) => {
-  const wallet = ctx.session.groupWallets[ctx.chat?.id || 0];
+  const wallet = groupWallets[ctx.chat?.id || 0];
   if (wallet) {
     try {
       const balance = await provider.getBalance(wallet.wallet.address);
@@ -239,130 +320,37 @@ bot.catch((err) => {
   console.error("Bot error:", err);
 });
 
-// Webhook Server Configuration
-const app = express();
+// Vercel serverless function handler
+export default async function handler(req: any, res: any) {
+  // Initial wallet load (only on first invocation)
+  if (Object.keys(groupWallets).length === 0) {
+    await loadWalletsFromDB();
+  }
 
-// Webhook path (should be a secret, hard to guess URL)
-const WEBHOOK_PATH = `/telegram/${process.env.BOT_TOKEN}`;
+  // Webhook path
+  const WEBHOOK_PATH = `/telegram/${process.env.BOT_TOKEN}`;
 
-// Webhook handler
-app.use(express.json());
-app.use(webhookCallback(bot, "express"));
-
-// Health check endpoint
-app.get("/", (req, res) => {
-  res.send("Bot is running");
-});
-
-// Determine app port
-const PORT = process.env.PORT || 3000;
-
-// SSL Options (for production)
-const sslOptions =
-  process.env.NODE_ENV === "production"
-    ? {
-        key: fs.readFileSync("/path/to/privkey.pem"),
-        cert: fs.readFileSync("/path/to/fullchain.pem"),
-      }
-    : null;
-
-// Initialize Prisma
-const prisma = new PrismaClient();
-
-// Add this after initializing the bot
-const groupWallets: { [chatId: number]: GroupWallet } = {};
-
-// Then modify loadWalletsFromDB to use this object instead of bot.session
-async function loadWalletsFromDB() {
-  try {
-    const dbWallets = await prisma.wallet.findMany({
-      include: {
-        admins: true,
-        transactions: true
-      }
-    });
-    for (const dbWallet of dbWallets) {
-      const wallet = ethers.HDNodeWallet.fromPhrase(dbWallet.mnemonic).connect(provider);
-      
-      groupWallets[Number(dbWallet.chatId)] = {
-        id: dbWallet.id,
-        chatId: Number(dbWallet.chatId),
-        wallet: wallet,
-        admins: dbWallet.admins.map((admin: { id: BigInt }) => Number(admin.id)),
-        transactions: dbWallet.transactions.map((tx: {
-          id: string;
-          amount: number;
-          recipient: string;
-          description: string;
-          timestamp: Date;
-          signatories: BigInt[];
-          txHash: string | null;
-          approved: boolean;
-        }) => ({
-          id: tx.id,
-          amount: tx.amount,
-          recipient: tx.recipient,
-          description: tx.description,
-          timestamp: tx.timestamp.getTime(),
-          signatories: tx.signatories.map(Number),
-          txHash: tx.txHash || undefined,
-          approved: tx.approved
-        }))
-      };
-    }
-  } catch (error) {
-    console.error("Error loading wallets from DB:", error);
+  // Determine if this is a webhook request
+  if (req.method === "POST" && req.url === WEBHOOK_PATH) {
+    await webhookCallback(bot, "express")(req, res);
+  } else {
+    // Health check or other routes
+    res.status(200).send("Bot is running");
   }
 }
 
-// Modify startServer to call loadWalletsFromDB
-function startServer() {
-  loadWalletsFromDB().then(() => {
-    if (sslOptions) {
-      https.createServer(sslOptions, app).listen(PORT, () => {
-        console.log(`HTTPS Server running on port ${PORT}`);
-        setWebhook();
-      });
-    } else {
-      app.listen(PORT, () => {
-        console.log(`HTTP Server running on port ${PORT}`);
-        setWebhook();
-      });
-    }
-  });
-}
-
-// Set webhook method
-async function setWebhook() {
+// Optional: Webhook setup function (can be run manually)
+export async function setupWebhook() {
   try {
-    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}${WEBHOOK_PATH}`;
+    // Use environment variable for webhook URL
+    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}/api/webhook`;
+
     await bot.api.setWebhook(webhookUrl, {
       drop_pending_updates: true,
     });
+
     console.log(`Webhook set to: ${webhookUrl}`);
   } catch (error) {
     console.error("Failed to set webhook:", error);
-  }
-}
-
-// Start the server
-startServer();
-
-export default app;
-
-// helper function to check if user is an admin
-async function isGroupAdmin(ctx: MyContext): Promise<boolean> {
-  try {
-    if (!ctx.chat?.id || !ctx.from?.id) return false;
-    
-    const chatMember = await ctx.api.getChatMember(
-      ctx.chat.id,
-      ctx.from.id
-    );
-    
-    return ['creator', 'administrator'].includes(chatMember.status);
-  } catch (error) {
-    console.error('Error checking admin status:', error);
-    return false;
   }
 }
