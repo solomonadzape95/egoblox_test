@@ -99,7 +99,7 @@ async function isGroupAdmin(ctx: MyContext): Promise<boolean> {
 // Initialize database when bot starts
 initializeDB().catch(console.error);
 
-// Add this helper function
+// helper function to check for wallet existence
 async function walletExists(chatId: number): Promise<boolean> {
   try {
     const dbWallet = await getWallet(chatId);

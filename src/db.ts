@@ -1,5 +1,5 @@
 import { sql } from '@vercel/postgres';
-import { ethers } from "ethers";
+// import { ethers } from "ethers";
 
 // Types
 interface DBWallet {
