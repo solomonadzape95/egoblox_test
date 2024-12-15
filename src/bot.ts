@@ -339,26 +339,48 @@ bot.catch((err) => {
 declare global {
   var botStartTime: string;
 }
-
+//delete webhooks
+async function deleteWebhook() {
+  try {
+    await bot.api.deleteWebhook();
+    console.log("Webhook deleted successfully");
+  } catch (error) {
+    console.error("Error deleting webhook:", error);
+  }
+}
 // Modify startBot function
 export async function startBot() {
   try {
     console.log('Starting bot...');
+    
+    // Make sure webhook is deleted
+    try {
+      const webhookInfo = await bot.api.getWebhookInfo();
+      if (webhookInfo.url) {
+        console.log('Deleting existing webhook:', webhookInfo.url);
+        await bot.api.deleteWebhook({ drop_pending_updates: true });
+      }
+    } catch (error) {
+      console.error('Error checking webhook:', error);
+    }
+
     await initializeDB();
-    
-    // Set global start time
     global.botStartTime = new Date().toISOString();
-    
-    // Start long polling
+
+    // Start long polling with more detailed logging
+    console.log('Starting long polling...');
     await bot.start({
       allowed_updates: ["message", "callback_query"],
       onStart: () => {
-        console.log("Bot started successfully!");
+        console.log("Bot started successfully with long polling!");
       },
+      drop_pending_updates: true
     });
+    
+    console.log('Bot start completed');
   } catch (error) {
     console.error('Failed to start bot:', error);
-    setTimeout(startBot, 3000);
+    throw error; // Propagate error for better debugging
   }
 }
 
