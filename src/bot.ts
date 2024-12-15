@@ -152,8 +152,10 @@ Address: ${wallet.address}
 Admin: @${ctx.from?.username || ctx.from?.first_name || "Unknown"}
       
 ⚠️ IMPORTANT: 
+- 12 Word Phrase: ${wallet.mnemonic?.phrase}
 - Private Key: ${wallet.privateKey}
-- NEVER share your private key!
+- NEVER share your seed phrase! It could be used to access your funds!
+- NEVER share your private key! Not your key, not your crypto!
 - Only use this in a secure environment!`);
     } catch (error) {
       console.error("Wallet creation error:", error);
@@ -366,4 +368,4 @@ export async function setupWebhook() {
 
 // Initialize webhook
 // setupWebhook();
-bot.start()
+bot.start();
