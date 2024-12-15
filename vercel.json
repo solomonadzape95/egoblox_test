@@ -15,11 +15,5 @@
       "src": "/status",
       "dest": "/api/status.ts"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/start",
-      "schedule": "*/5 * * * *"
-    }
   ]
 }
