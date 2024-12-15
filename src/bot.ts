@@ -358,7 +358,7 @@ export default async function handler(req: any, res: any) {
 export async function setupWebhook() {
   try {
     await bot.api.deleteWebhook();
-    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}/src/bot`;
+    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}/dist/bot`;
     await bot.api.setWebhook(webhookUrl);
     console.log(`Webhook set to: ${webhookUrl}`);
   } catch (error) {
