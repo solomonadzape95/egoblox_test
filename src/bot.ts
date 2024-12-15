@@ -8,7 +8,13 @@ import {
 import { ethers } from "ethers";
 import { v4 as uuidv4 } from "uuid";
 import * as dotenv from "dotenv";
-import { PrismaClient } from "@prisma/client";
+import {
+  initializeDB,
+  createWallet as dbCreateWallet,
+  getWallet,
+  createTransaction as dbCreateTransaction,
+} from "./db";
+import express from "express";
 
 // Load environment variables
 dotenv.config();
@@ -42,15 +48,12 @@ interface SessionData {
   groupWallets: { [chatId: number]: GroupWallet };
 }
 
-// Initialize Ethereum provider (use Sepolia testnet as default)
+// Initialize Ethereum provider
 const provider = new ethers.JsonRpcProvider(
   process.env.ETHEREUM_RPC_URL || "https://sepolia.infura.io/v3/YOUR-PROJECT-ID"
 );
 
-// Initialize Prisma
-const prisma = new PrismaClient();
-
-// Global wallets storage (for serverless environment)
+// Global wallets storage
 const groupWallets: { [chatId: number]: GroupWallet } = {};
 
 // Initialize bot
@@ -85,9 +88,7 @@ bot.use(async (ctx, next) => {
 async function isGroupAdmin(ctx: MyContext): Promise<boolean> {
   try {
     if (!ctx.chat?.id || !ctx.from?.id) return false;
-
     const chatMember = await ctx.api.getChatMember(ctx.chat.id, ctx.from.id);
-
     return ["creator", "administrator"].includes(chatMember.status);
   } catch (error) {
     console.error("Error checking admin status:", error);
@@ -95,85 +96,60 @@ async function isGroupAdmin(ctx: MyContext): Promise<boolean> {
   }
 }
 
-// Load wallets from database
-async function loadWalletsFromDB() {
-  try {
-    const dbWallets = await prisma.wallet.findMany({
-      include: {
-        admins: true,
-        transactions: true,
-      },
-    });
-    for (const dbWallet of dbWallets) {
-      const wallet = ethers.HDNodeWallet.fromPhrase(dbWallet.mnemonic).connect(
-        provider
-      );
+// Initialize database when bot starts
+initializeDB().catch(console.error);
 
-      groupWallets[Number(dbWallet.chatId)] = {
-        id: dbWallet.id,
-        chatId: Number(dbWallet.chatId),
-        wallet: wallet,
-        admins: dbWallet.admins.map((admin: { id: BigInt }) =>
-          Number(admin.id)
-        ),
-        transactions: dbWallet.transactions.map((tx: any) => ({
-          id: tx.id,
-          amount: tx.amount,
-          recipient: tx.recipient,
-          description: tx.description,
-          timestamp: tx.timestamp.getTime(),
-          signatories: tx.signatories.map(Number),
-          txHash: tx.txHash || undefined,
-          approved: tx.approved,
-        })),
-      };
-    }
+// Add this helper function
+async function walletExists(chatId: number): Promise<boolean> {
+  try {
+    const dbWallet = await getWallet(chatId);
+    return dbWallet !== null;
   } catch (error) {
-    console.error("Error loading wallets from DB:", error);
+    console.error("Error checking wallet existence:", error);
+    return false;
   }
 }
 
 // Conversations
 const createWalletConversation = createConversation<MyContext>(
   async (conversation, ctx) => {
+    // Check if wallet already exists
+    if (await walletExists(ctx.chat?.id || 0)) {
+      await ctx.reply("A wallet already exists for this group!");
+      return;
+    }
+
     await ctx.reply("Creating a new group wallet...");
 
     try {
       // Create Ethereum wallet
       const wallet = ethers.Wallet.createRandom().connect(provider);
+      const walletId = uuidv4();
 
+      // Save to database
+      await dbCreateWallet(
+        walletId,
+        wallet.address,
+        ctx.chat?.id || 0,
+        wallet.privateKey,
+        wallet.mnemonic?.phrase || "",
+        ctx.from?.id || 0,
+        ctx.from?.username || ctx.from?.first_name || "Unknown"
+      );
+
+      // Save to memory
       const newWallet: GroupWallet = {
-        id: uuidv4(),
+        id: walletId,
         chatId: ctx.chat?.id || 0,
         wallet: wallet,
         admins: [ctx.from?.id || 0],
         transactions: [],
       };
-
-      // Save wallet to global storage and potentially database
       groupWallets[newWallet.chatId] = newWallet;
-
-      // Optional: Save to database using Prisma
-      await prisma.wallet.create({
-        data: {
-          id: newWallet.id,
-          address: wallet.address,
-          chatId: BigInt(newWallet.chatId),
-          createdById: BigInt(ctx.from?.id || 0),
-          createdByName: ctx.from?.first_name || "Unknown",
-          mnemonic: wallet.mnemonic?.phrase || "",
-          admins: {
-            create: newWallet.admins.map((adminId) => ({
-              id: BigInt(adminId),
-              name: ctx.from?.first_name || "Unknown",
-            })),
-          },
-        },
-      });
 
       await ctx.reply(`Wallet created successfully!
 Address: ${wallet.address}
-Admins: ${newWallet.admins.join(", ")}
+Admin: @${ctx.from?.username || ctx.from?.first_name || "Unknown"}
       
 ⚠️ IMPORTANT: 
 - Private Key: ${wallet.privateKey}
@@ -189,8 +165,13 @@ Admins: ${newWallet.admins.join(", ")}
 
 const createTransactionConversation = createConversation<MyContext>(
   async (conversation, ctx) => {
-    const wallet = groupWallets[ctx.chat?.id || 0];
+    // Check if user is admin
+    if (!(await isGroupAdmin(ctx))) {
+      await ctx.reply("Only group administrators can create transactions.");
+      return;
+    }
 
+    const wallet = groupWallets[ctx.chat?.id || 0];
     if (!wallet) {
       await ctx.reply("No wallet exists for this group.");
       return;
@@ -200,9 +181,35 @@ const createTransactionConversation = createConversation<MyContext>(
     const { message: recipientMsg } = await conversation.wait();
     const recipient = (recipientMsg && recipientMsg.text) || "";
 
+    // Validate recipient address
+    if (!ethers.isAddress(recipient)) {
+      await ctx.reply("Invalid Ethereum address. Please try again.");
+      return;
+    }
+
     await ctx.reply("Enter amount (in ETH):");
     const { message: amountMsg } = await conversation.wait();
     const amount = parseFloat((amountMsg && amountMsg.text) || "0");
+
+    // Validate amount
+    if (isNaN(amount) || amount <= 0) {
+      await ctx.reply("Invalid amount. Please enter a number greater than 0.");
+      return;
+    }
+
+    // Check balance
+    try {
+      const balance = await provider.getBalance(wallet.wallet.address);
+      const amountWei = ethers.parseEther(amount.toString());
+      if (balance < amountWei) {
+        await ctx.reply("Insufficient balance for this transaction.");
+        return;
+      }
+    } catch (error) {
+      console.error("Balance check error:", error);
+      await ctx.reply("Failed to check balance. Please try again.");
+      return;
+    }
 
     await ctx.reply("Enter transaction description:");
     const { message: descMsg } = await conversation.wait();
@@ -215,8 +222,21 @@ const createTransactionConversation = createConversation<MyContext>(
         value: ethers.parseEther(amount.toString()),
       });
 
+      const transactionId = uuidv4();
+
+      // Save to database
+      await dbCreateTransaction(
+        transactionId,
+        wallet.id,
+        amount.toString(),
+        recipient,
+        description,
+        tx.hash
+      );
+
+      // Save to memory
       const transaction: Transaction = {
-        id: uuidv4(),
+        id: transactionId,
         amount,
         recipient,
         description,
@@ -225,23 +245,7 @@ const createTransactionConversation = createConversation<MyContext>(
         txHash: tx.hash,
         approved: true,
       };
-
       wallet.transactions.push(transaction);
-
-      // Save transaction to database
-      await prisma.transaction.create({
-        data: {
-          id: transaction.id,
-          walletId: wallet.id,
-          amount: transaction.amount,
-          recipient: transaction.recipient,
-          description: transaction.description,
-          timestamp: new Date(transaction.timestamp),
-          signatories: transaction.signatories.map((id) => BigInt(id)),
-          txHash: transaction.txHash,
-          approved: transaction.approved,
-        },
-      });
 
       await ctx.reply(`Transaction created:
 Recipient: ${recipient}
@@ -297,7 +301,6 @@ bot.command("createwallet", async (ctx) => {
     await ctx.reply("Only group administrators can create wallets.");
     return;
   }
-
   await ctx.conversation.enter("create-wallet");
 });
 
@@ -306,16 +309,24 @@ bot.command("createtx", async (ctx) => {
 });
 
 bot.command("balance", async (ctx) => {
+  // Check if in group
+  if (ctx.chat?.type === "private") {
+    ctx.reply("This command can only be used in groups.");
+    return;
+  }
+
   const wallet = groupWallets[ctx.chat?.id || 0];
-  if (wallet) {
-    try {
-      const balance = await provider.getBalance(wallet.wallet.address);
-      ctx.reply(`Current Balance: ${ethers.formatEther(balance)} ETH`);
-    } catch (error) {
-      ctx.reply("Unable to fetch balance.");
-    }
-  } else {
+  if (!wallet) {
     ctx.reply("No wallet exists for this group.");
+    return;
+  }
+
+  try {
+    const balance = await provider.getBalance(wallet.wallet.address);
+    ctx.reply(`Current Balance: ${ethers.formatEther(balance)} ETH`);
+  } catch (error) {
+    console.error("Balance check error:", error);
+    ctx.reply("Unable to fetch balance. Please try again later.");
   }
 });
 
@@ -323,41 +334,56 @@ bot.command("balance", async (ctx) => {
 bot.catch((err) => {
   console.error("Bot error:", err);
 });
+
 // Webhook path
 const WEBHOOK_PATH = `/telegram/${process.env.BOT_TOKEN}`;
-// Vercel serverless function handler
-export default async function handler(req: any, res: any) {
-  // Initial wallet load (only on first invocation)
-  if (Object.keys(groupWallets).length === 0) {
-    await loadWalletsFromDB();
-  }
 
-  // Webhook path
-  const WEBHOOK_PATH = `/telegram/${process.env.BOT_TOKEN}`;
+// Express app setup for local development
+const app = express();
+app.use(express.json());
 
-  // Determine if this is a webhook request
-  if (req.method === "POST" && req.url === WEBHOOK_PATH) {
-    await webhookCallback(bot, "express")(req, res);
-  } else {
-    // Health check or other routes
-    res.status(200).send("Bot is running");
-  }
-}
+// Health check endpoint
+app.get("/", (req, res) => {
+  res.send("Bot is running");
+});
 
-// Optional: Webhook setup function (can be run manually)
+// Webhook handler
+app.post(WEBHOOK_PATH, webhookCallback(bot, "express"));
+
+// Webhook setup function
 export async function setupWebhook() {
   try {
-    // Use environment variable for webhook URL
-    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}${WEBHOOK_PATH}`;
+    // First delete any existing webhook
+    await bot.api.deleteWebhook();
 
+    // Then set the new webhook
+    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}${WEBHOOK_PATH}`;
     await bot.api.setWebhook(webhookUrl, {
       drop_pending_updates: true,
     });
-
     console.log(`Webhook set to: ${webhookUrl}`);
   } catch (error) {
     console.error("Failed to set webhook:", error);
+    throw error;
   }
 }
-setupWebhook();
-bot.start();
+
+// Start server based on environment
+// if (process.env.NODE_ENV === "production") {
+//   // Vercel serverless function handler
+  export default async function handler(req: any, res: any) {
+    if (req.method === "POST" && req.url === WEBHOOK_PATH) {
+      await webhookCallback(bot, "express")(req, res);
+    } else {
+      res.status(200).send("Bot is running");
+    }
+  }
+  setupWebhook();
+// } else {
+  // Local development server
+//   const PORT = process.env.PORT || 3000;
+//   app.listen(PORT, async () => {
+//     console.log(`Bot is running on port ${PORT}`);
+//     await setupWebhook();
+//   });
+// }
