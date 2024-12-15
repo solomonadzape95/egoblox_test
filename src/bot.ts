@@ -365,4 +365,5 @@ export async function setupWebhook() {
 }
 
 // Initialize webhook
-setupWebhook();
+// setupWebhook();
+bot.start()
