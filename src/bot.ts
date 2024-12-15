@@ -340,17 +340,29 @@ bot.catch((err) => {
 const WEBHOOK_PATH = `/telegram/${process.env.BOT_TOKEN}`;
 
 // Vercel serverless function handler
-export { bot };
+// export { bot };
 
 // Webhook setup function
-export async function setupWebhook() {
+async function setupWebhook() {
   try {
     await bot.api.deleteWebhook();
-    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}/api/bot`;
+    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}/telegram/${process.env.BOT_TOKEN}`;
     await bot.api.setWebhook(webhookUrl);
     console.log(`Webhook set to: ${webhookUrl}`);
   } catch (error) {
     console.error("Failed to set webhook:", error);
+  }
+}
+const handleWebhook = webhookCallback(bot, "express");
+
+// Export the serverless function
+export default async function handler(req, res) {
+  if (req.method === "POST") {
+    // Handle incoming updates from Telegram
+    await handleWebhook(req, res);
+  } else {
+    // Respond with a 405 Method Not Allowed for non-POST requests
+    res.status(405).send("Method Not Allowed");
   }
 }
 

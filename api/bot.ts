@@ -1,21 +1,38 @@
-import { bot } from "../dist/src/bot";
 import { webhookCallback } from "grammy";
+import { Bot } from "grammy";
+import * as dotenv from "dotenv";
 
-export const config = {
-  runtime: "edge",
-};
+// Load environment variables
+dotenv.config();
 
-// Vercel serverless function handler
-export default async function handler(req: Request) {
+// Initialize the bot
+const bot = new Bot(process.env.BOT_TOKEN || "");
+
+// Set up the webhook callback
+const handleWebhook = webhookCallback(bot, "express");
+
+// Export the serverless function
+export default async function handler(req, res) {
   if (req.method === "POST") {
-    try {
-      const response = await req.json();
-      await bot.handleUpdate(response);
-      return new Response("OK", { status: 200 });
-    } catch (error) {
-      console.error("Webhook error:", error);
-      return new Response("Error processing webhook", { status: 500 });
-    }
+    // Handle incoming updates from Telegram
+    await handleWebhook(req, res);
+  } else {
+    // Respond with a 405 Method Not Allowed for non-POST requests
+    res.status(405).send("Method Not Allowed");
   }
-  return new Response("Bot is running", { status: 200 });
 }
+
+// Webhook setup function
+async function setupWebhook() {
+  try {
+    await bot.api.deleteWebhook();
+    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}   `;
+    await bot.api.setWebhook(webhookUrl);
+    console.log(`Webhook set to: ${webhookUrl}`);
+  } catch (error) {
+    console.error("Failed to set webhook:", error);
+  }
+}
+
+// Call this function to set up the webhook when deploying
+setupWebhook();
