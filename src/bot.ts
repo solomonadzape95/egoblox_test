@@ -338,60 +338,31 @@ bot.catch((err) => {
 // Webhook path
 const WEBHOOK_PATH = `/telegram/${process.env.BOT_TOKEN}`;
 
-// Express app setup for local development
-const app = express();
-app.use(express.json());
-
-// Health check endpoint
-app.get("/", (req, res) => {
-  res.send("Bot is running");
-});
-
-// Webhook handler
-app.post(WEBHOOK_PATH, webhookCallback(bot, "express"));
+// Vercel serverless function handler
 export default async function handler(req: any, res: any) {
-  if (req.method === "POST" && req.url === WEBHOOK_PATH) {
-    await webhookCallback(bot, "express")(req, res);
+  if (req.method === "POST") {
+    try {
+      await webhookCallback(bot, "express")(req, res);
+    } catch (error) {
+      console.error("Webhook error:", error);
+      res.status(500).json({ error: "Failed to process webhook" });
+    }
   } else {
     res.status(200).send("Bot is running");
   }
 }
+
 // Webhook setup function
 export async function setupWebhook() {
   try {
-    // First delete any existing webhook
     await bot.api.deleteWebhook();
-
-    // Then set the new webhook
     const webhookUrl = `${process.env.WEBHOOK_DOMAIN}${WEBHOOK_PATH}`;
-    await bot.api.setWebhook(webhookUrl, {
-      drop_pending_updates: true,
-    });
+    await bot.api.setWebhook(webhookUrl);
     console.log(`Webhook set to: ${webhookUrl}`);
   } catch (error) {
     console.error("Failed to set webhook:", error);
-    throw error;
   }
 }
 
-// Remove the if-else block and keep only the handler
-// export default async function handler(req: any, res: any) {
-//   if (process.env.NODE_ENV === 'production') {
-//     if (req.method === "POST" && req.url === WEBHOOK_PATH) {
-//       await webhookCallback(bot, "express")(req, res);
-//     } else {
-//       res.status(200).send("Bot is running");
-//     }
-//   } else {
-//     // Local development server
-//     const PORT = process.env.PORT || 3000;
-//     app.listen(PORT, async () => {
-//       console.log(`Bot is running on port ${PORT}`);
-//       await setupWebhook();
-//     });
-//   }
-// }
-
+// Initialize webhook
 setupWebhook();
-// bot.start();
-// Vercel serverless function handler
