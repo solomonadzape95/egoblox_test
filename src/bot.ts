@@ -1,4 +1,3 @@
-import { webhookCallback } from "grammy";
 import { Bot, Context, session, SessionFlavor } from "grammy";
 import {
   conversations,
@@ -336,36 +335,32 @@ bot.catch((err) => {
   console.error("Bot error:", err);
 });
 
-// Webhook path
-const WEBHOOK_PATH = `/telegram/${process.env.BOT_TOKEN}`;
+// Add near the top with other imports
+declare global {
+  var botStartTime: string;
+}
 
-// Vercel serverless function handler
-// export { bot };
-
-// Webhook setup function
-async function setupWebhook() {
+// Modify startBot function
+export async function startBot() {
   try {
-    await bot.api.deleteWebhook();
-    const webhookUrl = `${process.env.WEBHOOK_DOMAIN}/telegram/${process.env.BOT_TOKEN}`;
-    await bot.api.setWebhook(webhookUrl);
-    console.log(`Webhook set to: ${webhookUrl}`);
+    console.log('Starting bot...');
+    await initializeDB();
+    
+    // Set global start time
+    global.botStartTime = new Date().toISOString();
+    
+    // Start long polling
+    await bot.start({
+      allowed_updates: ["message", "callback_query"],
+      onStart: () => {
+        console.log("Bot started successfully!");
+      },
+    });
   } catch (error) {
-    console.error("Failed to set webhook:", error);
-  }
-}
-const handleWebhook = webhookCallback(bot, "express");
-
-// Export the serverless function
-export default async function handler(req, res) {
-  if (req.method === "POST") {
-    // Handle incoming updates from Telegram
-    await handleWebhook(req, res);
-  } else {
-    // Respond with a 405 Method Not Allowed for non-POST requests
-    res.status(405).send("Method Not Allowed");
+    console.error('Failed to start bot:', error);
+    setTimeout(startBot, 3000);
   }
 }
 
-// Initialize webhook
-setupWebhook();
-// bot.start();
+// Export bot instance for testing/debugging
+export { bot };

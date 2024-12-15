@@ -2,15 +2,24 @@
   "version": 2,
   "builds": [
     {
-      "src": "package.json",
-      "use": "@vercel/node",
-      "config": { "includeFiles": ["dist/**"] }
+      "src": "api/**/*.ts",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
     {
-      "src": "/api/bot",
-      "dest": "/api/bot.ts"
+      "src": "/api/start",
+      "dest": "/api/start.ts"
+    },
+    {
+      "src": "/status",
+      "dest": "/api/status.ts"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/start",
+      "schedule": "*/5 * * * *"
     }
   ]
-} 
+}
