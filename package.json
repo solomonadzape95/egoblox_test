@@ -1,25 +1,21 @@
 {
-  "name": "group-wallet-bot",
+  "name": "bookam-telegram-bot",
   "version": "1.0.0",
-  "description": "Telegram bot for managing group wallets on Ethereum",
-  "type": "module",
-  "main": "api/bot.js",
+  "private": true,
   "scripts": {
-    "start": "node api/bot.js",
-    "dev": "nodemon api/bot.js"
+    "dev": "vercel dev",
+    "deploy": "vercel deploy"
   },
   "dependencies": {
-    "@vercel/postgres": "^0.7.2",
-    "dotenv": "^16.4.5",
-    "ethers": "^6.11.1",
-    "grammy": "^1.21.1",
-    "@grammyjs/conversations": "^1.2.0",
-    "uuid": "^9.0.1"
+    "telegraf": "^4.15.3",
+    "node-cache": "^5.1.2",
+    "qrcode": "^1.5.3",
+    "dotenv": "^16.4.5"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "@types/node": "^20.11.0",
+    "@vercel/node": "^3.0.0",
+    "typescript": "^5.0.0",
+    "vercel": "^33.0.0"
   }
 }
